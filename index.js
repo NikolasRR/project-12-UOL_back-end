@@ -117,4 +117,19 @@ server.get("/messages", async (req, res) => {
     }
 });
 
+server.post("/status", async (req, res) => {
+    const { user } = req.headers;
+    try {
+        const userIsOnline = await db.collection("users").findOne({ name: user });
+        if (!userIsOnline) {
+            res.sendStatus(404);
+            return;
+        }
+        await db.collection("users").updateOne({ name: user }, { $set: { lastStatus: Date.now() } });
+        res.sendStatus(200);
+    } catch (error) {
+        res.sendStatus(500);
+    }
+});
+
 server.listen(5000, () => console.log("Servidor Operacional"));
