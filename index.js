@@ -13,6 +13,20 @@ mongoClient.connect(() => {
     db = mongoClient.db(process.env.DATABASE);
 });
 
+const userSchema = joi.object({
+    name: joi.string().required()
+});
+
+const messageSchema = joi.object({
+    to: joi.string().required(),
+    text: joi.string().required(),
+    type: joi.string().valid("message", "private_message")
+});
+
+const server = express();
+server.use(cors());
+server.use(json());
+
 setInterval(async () => {
     const dateNow = Date.now() - 10000;
 
@@ -28,46 +42,35 @@ setInterval(async () => {
     })
     if (offlineParticipantsStatusMsg.length > 0) {
         await db.collection("users").deleteMany({ lastStatus: { $lte: dateNow } });
-    await db.collection("messages").insertMany(offlineParticipantsStatusMsg);
+        await db.collection("messages").insertMany(offlineParticipantsStatusMsg);
     }
 }, 15000);
 
-const userSchema = joi.object({
-    name: joi.string().required()
-});
-
-const messageSchema = joi.object({
-    to: joi.string().required(),
-    text: joi.string().required(),
-    type: joi.string().valid("message", "private_message")
-});
-
-const server = express();
-server.use(cors());
-server.use(json());
 
 server.post("/participants", async (req, res) => {
+    const { name } = req.body;
     const validation = userSchema.validate(req.body);
+
     if (validation.error) {
         res.sendStatus(422);
         return;
     }
 
     try {
-        const participantAlreadyExists = await db.collection("users").findOne({ name: req.body.name });
+        const participantAlreadyExists = await db.collection("users").findOne({ name: name });
         if (participantAlreadyExists) {
             res.sendStatus(409);
             return;
         }
 
         const newParticipant = {
-            name: req.body.name,
+            name: name,
             lastStatus: Date.now()
         };
         await db.collection("users").insertOne(newParticipant);
 
         const newStatusMessage = {
-            from: req.body.name,
+            from: name,
             to: "Todos",
             text: "entra na sala...",
             type: "status",
@@ -93,16 +96,18 @@ server.get("/participants", async (req, res) => {
 
 
 server.post("/messages", async (req, res) => {
+    const { user } = req.headers;
+
     try {
         const validation = messageSchema.validate(req.body);
-        const messageAuthor = await db.collection("users").findOne({ name: req.headers.user });
+        const messageAuthor = await db.collection("users").findOne({ name: user });
         if (validation.error || !messageAuthor) {
             res.sendStatus(422);
             return;
         }
         await db.collection("messages").insertOne({
             ...req.body,
-            from: req.headers.user,
+            from: user,
             time: `${dayjs().hour()}:${dayjs().minute()}:${dayjs().second()}`
         });
         res.sendStatus(201);
@@ -112,21 +117,13 @@ server.post("/messages", async (req, res) => {
 });
 
 server.get("/messages", async (req, res) => {
-    const limit = req.query.limit;
-    let limitMessages = [];
+    const { user } = req.headers;
+    const { limit } = req.query;
+
     try {
         const allMessages = await db.collection("messages").find({
-            $or: [ { to: { $in: [ req.headers.user, "Todos" ] }}, { from: req.headers.user } ]
+            $or: [{ to: { $in: [user, "Todos"] } }, { from: user }]
         }).toArray();
-
-        // const undesiredLength = limitMessages.length < limit && limitMessages.length <= allMessages.length;
-        // if (limit) {
-        //     for (let i = allMessages.length - 1; undesiredLength; i--) {
-        //         limitMessages.unshift(allMessages[i]);
-        //     }
-        //     res.send(limitMessages).status(200);
-        //     return;
-        // }
 
         if (limit && allMessages.length > limit) {
             allMessages.splice(0, allMessages.length - limit);
