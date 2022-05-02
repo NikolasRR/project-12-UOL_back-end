@@ -13,6 +13,24 @@ mongoClient.connect(() => {
     db = mongoClient.db(process.env.DATABASE);
 });
 
+setInterval(async () => {
+    const dateNow = Date.now() - 10000;
+
+    const participants = await db.collection("users").find({ lastStatus: { $lte: dateNow } }).toArray();
+    const offlineParticipantsStatusMsg = participants.map(participant => {
+        return {
+            from: participant.name,
+            to: "Todos",
+            text: "sai da sala...",
+            type: "status",
+            time: `${dayjs().hour()}:${dayjs().minute()}:${dayjs().second()}`
+        }
+    })
+    if (offlineParticipantsStatusMsg.length > 0) {
+        await db.collection("users").deleteMany({ lastStatus: { $lte: dateNow } });
+    await db.collection("messages").insertMany(offlineParticipantsStatusMsg);
+    }
+}, 15000);
 
 const userSchema = joi.object({
     name: joi.string().required()
@@ -31,7 +49,6 @@ server.use(json());
 server.post("/participants", async (req, res) => {
     const validation = userSchema.validate(req.body);
     if (validation.error) {
-        console.log(validation.error.details)
         res.sendStatus(422);
         return;
     }
@@ -47,7 +64,7 @@ server.post("/participants", async (req, res) => {
             name: req.body.name,
             lastStatus: Date.now()
         };
-        // await db.collection("users").insertOne(newParticipant);
+        await db.collection("users").insertOne(newParticipant);
 
         const newStatusMessage = {
             from: req.body.name,
@@ -56,9 +73,8 @@ server.post("/participants", async (req, res) => {
             type: "status",
             time: `${dayjs().hour()}:${dayjs().minute()}:${dayjs().second()}`
         }
-        // await db.collection("messages").insertOne(newStatusMessage);
+        await db.collection("messages").insertOne(newStatusMessage);
 
-        console.log(newStatusMessage);
         res.sendStatus(201);
     } catch (error) {
         res.sendStatus(500);
@@ -103,14 +119,20 @@ server.get("/messages", async (req, res) => {
             $or: [ { to: { $in: [ req.headers.user, "Todos" ] }}, { from: req.headers.user } ]
         }).toArray();
 
-        if (limit) {
-            for (let i = allMessages.length - 1; limitMessages.length < limit; i--) {
-                limitMessages.push(allMessages[i]);
-            }
-            res.send(limitMessages.reverse()).status(200);
+        // const undesiredLength = limitMessages.length < limit && limitMessages.length <= allMessages.length;
+        // if (limit) {
+        //     for (let i = allMessages.length - 1; undesiredLength; i--) {
+        //         limitMessages.unshift(allMessages[i]);
+        //     }
+        //     res.send(limitMessages).status(200);
+        //     return;
+        // }
+
+        if (limit && allMessages.length > limit) {
+            allMessages.splice(0, allMessages.length - limit);
+            res.send(allMessages).status(200);
             return;
         }
-
         res.send(allMessages).status(200);
     } catch (error) {
         res.sendStatus(500);
